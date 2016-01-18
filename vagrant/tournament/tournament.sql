@@ -6,6 +6,9 @@
 -- You can write comments in this file by starting them with two dashes, like
 -- these lines here.
 
+-- Only  create database if it doesn't exist
+CREATE DATABASE tournament;
+
 -- Once registered into a tournament, player keeps the same ID
 CREATE TABLE registeredPlayers (
     id SERIAL primary key,
@@ -21,25 +24,28 @@ CREATE TABLE tournaments (
 -- Possibly not needed; could be combined into "tournaments" table
 CREATE TABLE playersInTournament (
     player INTEGER references registeredPlayers (id),
-    tournament INTEGER references tournaments (id),
-    primary key (player, tournament)
+--    tournament INTEGER references tournaments (id),
+--    primary key (player, tournament)
+    primary key (player)
 );
 
 -- Could be determined programmatically
 CREATE TABLE standings (
     player INTEGER references registeredPlayers (id),
-    tournament INTEGER references tournaments (id),
+--    tournament INTEGER references tournaments (id),
     points INTEGER DEFAULT 0,
-    standing INTEGER DEFAULT 0,
-    primary key (player, tournament)
+    matches INTEGER DEFAULT 0,
+--    primary key (player, tournament)
+    primary key (player)
 );
 
 -- Same number of matches for each round
-CREATE TABLE matches (
-    tournamentId INTEGER references tournaments,
+CREATE TABLE rounds (
+    tournamentId INTEGER references tournaments (id),
     roundNum INTEGER,
     matchNum INTEGER,
     winner INTEGER references registeredPlayers (id),
     loser INTEGER references registeredPlayers (id),
-    primary key (tournamentId, roundNum, matchNum)
+--    primary key (tournamentId, roundNum, matchNum)
+    primary key (roundNum, matchNum)
 );

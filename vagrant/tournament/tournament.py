@@ -5,6 +5,8 @@
 
 import psycopg2
 
+# Default tournamentID
+#TOURNMENTID = 0;
 
 def connect():
     """Connect to the PostgreSQL database.  Returns a database connection."""
@@ -13,13 +15,20 @@ def connect():
 
 def deleteMatches():
     """Remove all the match records from the database."""
-
+    conn = connect()
+    c = conn.cursor()
+    # Delete players from registration and standings
+    c.execute("DELETE FROM rounds;")
+    conn.commit()
+    conn.close()
 
 def deletePlayers():
     """Remove all the player records from the database."""
     #
     conn = connect()
     c = conn.cursor()
+    # Delete players from registration and standings
+    c.execute("DELETE FROM  standings;")
     c.execute("DELETE FROM registeredPlayers;")
     conn.commit()
     conn.close()
@@ -48,7 +57,12 @@ def registerPlayer(name):
     #
     conn = connect()
     c = conn.cursor()
-    c.execute("INSERT INTO registeredPlayers (name) VALUES ('%s');" %name)
+    # Register player into tournament
+    c.execute("INSERT INTO registeredPlayers (name) VALUES (%s) RETURNING id;", (name,))
+    playerId = c.fetchone()[0]
+    conn.commit()
+    # Add the player to standings (no wins, no matches)
+    c.execute("INSERT INTO standings (player) VALUES (%d);" %(playerId))
     conn.commit()
     conn.close()
 
@@ -67,15 +81,60 @@ def playerStandings():
         matches: the number of matches the player has played
     """
 
+    conn = connect()
+    c = conn.cursor()
+    c.execute('''SELECT id, name, points, matches
+        FROM standings, registeredPlayers
+        WHERE standings.player = registeredPlayers.id
+        ORDER BY points;
+    ''')
+    standings = c.fetchall()
+    conn.commit()
+    conn.close()
+    return standings
 
-def reportMatch(winner, loser):
+def updateStandings(player, matchOutcome):
+    """Updates a player's standing after a match.
+
+    Args:
+        player:  the id number of the player whose stats are being updated
+        matchOutcome: outcome of match (possible values: "won", "lost", "tie")
+    """
+
+    # Default to no points if "lost" or other unrecognized `matchOutcome`
+    points = 0
+    if(matchOutcome == "won"):
+        points = 3
+    elif(matchOutcome == "tie"):
+        points = 1
+
+    conn = connect()
+    c = conn.cursor()
+    # Assume another match was played
+    command = "UPDATE standings SET matches = matches + 1, points = points + %.1f " %(points)
+    # Avoid string interpolation on `player` (no SQL injection)
+    command += "WHERE standings.player = %s;"
+    c.execute(command, (player,))
+    conn.commit()
+    conn.close()
+
+def reportMatch(winner, loser, tie=False):
     """Records the outcome of a single match between two players.
 
     Args:
       winner:  the id number of the player who won
       loser:  the id number of the player who lost
+      tie: whether the players tied (boolean value); default is `False`
     """
 
+    # Use helper function to more cleanly update table
+    # Helper function accesses/updates table once (total of two times here)
+    if(not tie):
+        updateStandings(winner,"won")
+        updateStandings(loser,"lost")
+    else:
+        updateStandings(winner,"tie")
+        updateStandings(loser,"tie")
 
 def swissPairings():
     """Returns a list of pairs of players for the next round of a match.
@@ -92,3 +151,14 @@ def swissPairings():
         id2: the second player's unique id
         name2: the second player's name
     """
+
+    # Get players standings (not neccessarily sorted)
+    players = playerStandings()
+    # Put into descending order wins/points (ensures winners are matched 1st)
+    players.sort(key=lambda l: l[2], reverse=True)
+    # Create a list of tuples (id1, name1, id2, name2) based on wins/points
+    pairs = []
+    for i in range(len(players)/2):
+        # Get one pair at a time; player is (id, name)
+        pairs += [(players[i*2][:2] + players[i*2+1][:2])]
+    return pairs
