@@ -28,7 +28,7 @@ def deletePlayers():
     conn = connect()
     c = conn.cursor()
     # Delete players from registration and standings
-    c.execute("DELETE FROM  standings;")
+    c.execute("DELETE FROM rounds;")
     c.execute("DELETE FROM registeredPlayers;")
     conn.commit()
     conn.close()
@@ -58,11 +58,9 @@ def registerPlayer(name):
     conn = connect()
     c = conn.cursor()
     # Register player into tournament
-    c.execute("INSERT INTO registeredPlayers (name) VALUES (%s) RETURNING id;", (name,))
+    command = "INSERT INTO registeredPlayers (name) VALUES (%s) RETURNING id;"
+    c.execute(command, (name,))
     playerId = c.fetchone()[0]
-    conn.commit()
-    # Add the player to standings (no wins, no matches)
-    c.execute("INSERT INTO standings (player) VALUES (%d);" %(playerId))
     conn.commit()
     conn.close()
 
@@ -83,40 +81,34 @@ def playerStandings():
 
     conn = connect()
     c = conn.cursor()
-    c.execute('''SELECT id, name, points, matches
-        FROM standings, registeredPlayers
-        WHERE standings.player = registeredPlayers.id
-        ORDER BY points;
-    ''')
-    standings = c.fetchall()
+    #
+    players_comm = "SELECT id,name FROM registeredPlayers;"
+    win_comm = "SELECT COUNT(*) as wins FROM rounds WHERE winner=%s AND tie=0;"
+    tie_comm = "SELECT COUNT(*) as ties FROM rounds "
+    tie_comm += "WHERE (winner=%s OR loser=%s) AND tie=1;"
+    matches_comm = "SELECT COUNT(*) as matches FROM rounds "
+    matches_comm += "WHERE winner=%s OR loser=%s"
+    #
+    c.execute(players_comm)
+    players = c.fetchall()
+    #
+    standings = []
+    #
+    for p,n in players:
+        # Wins are worth 3 points
+        c.execute(win_comm,(p,))
+        wins = 3 * c.fetchone()[0]
+        # Ties are worth 1 point
+        c.execute(tie_comm,(p,p,))
+        ties = c.fetchone()[0]
+        # Count Matches
+        c.execute(matches_comm,(p,p,))
+        matches = c.fetchone()[0]
+        # Add tuple to list (id,name,wins/points,matches)
+        standings += [(p,n,wins+ties,matches)]
     conn.commit()
     conn.close()
     return standings
-
-def updateStandings(player, matchOutcome):
-    """Updates a player's standing after a match.
-
-    Args:
-        player:  the id number of the player whose stats are being updated
-        matchOutcome: outcome of match (possible values: "won", "lost", "tie")
-    """
-
-    # Default to no points if "lost" or other unrecognized `matchOutcome`
-    points = 0
-    if(matchOutcome == "won"):
-        points = 3
-    elif(matchOutcome == "tie"):
-        points = 1
-
-    conn = connect()
-    c = conn.cursor()
-    # Assume another match was played
-    command = "UPDATE standings SET matches = matches + 1, points = points + %.1f " %(points)
-    # Avoid string interpolation on `player` (no SQL injection)
-    command += "WHERE standings.player = %s;"
-    c.execute(command, (player,))
-    conn.commit()
-    conn.close()
 
 def reportMatch(winner, loser, tie=False):
     """Records the outcome of a single match between two players.
@@ -127,14 +119,14 @@ def reportMatch(winner, loser, tie=False):
       tie: whether the players tied (boolean value); default is `False`
     """
 
-    # Use helper function to more cleanly update table
-    # Helper function accesses/updates table once (total of two times here)
-    if(not tie):
-        updateStandings(winner,"won")
-        updateStandings(loser,"lost")
-    else:
-        updateStandings(winner,"tie")
-        updateStandings(loser,"tie")
+    conn = connect()
+    c = conn.cursor()
+    command = "INSERT INTO rounds (winner,loser,tie) VALUES (%s,%s,%s);"
+    # Check whether it was a tie or not
+    wasTie = 1 if tie else 0
+    c.execute(command, (winner,loser,wasTie,))
+    conn.commit()
+    conn.close()
 
 def swissPairings():
     """Returns a list of pairs of players for the next round of a match.
